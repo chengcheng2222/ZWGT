@@ -53,9 +53,12 @@ env:
   AFL_FUZZ_PATH: ../afl-fuzz
   OUTPUT_DIR: outputs
   LOG_DIR: logs
+  KNOWN_SUMMARIES_FILE: outputs/asan_known_summaries.txt
 
   RESULT_ARCHIVE_PREFIX: opener-1-findings
   LOG_ARTIFACT_PREFIX: opener-1-log
+
+  TOTAL_TIME:300
 
   WORKFLOW_DISPATCH_FILE: opener-1.yml
   DISPATCH_REF: main
@@ -150,8 +153,7 @@ jobs:
 
           set +e
 
-          # 5小时50分钟 = 21000 秒，预留后续时间给 ASAN 分类、Issue、上传产物
-          timeout 300 env \
+          timeout "${total_time}" env \
             AFL_AUTORESUME=1 \
             AFL_IMPORT_FIRST=1 \
             AFL_FINAL_SYNC=1 \
@@ -167,7 +169,7 @@ jobs:
             > "logs/afl-fuzz-out_m0-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
 
-          timeout 300 env \
+          timeout "${total_time}" env \
             AFL_AUTORESUME=1 \
             AFL_CMPLOG_ONLY_NEW=1 \
             AFL_IMPORT_FIRST=1 \
@@ -184,7 +186,7 @@ jobs:
             > "logs/afl-fuzz-out_s1-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
 
-          timeout 300 env \
+          timeout "${total_time}" env \
             AFL_AUTORESUME=1 \
             AFL_IMPORT_FIRST=1 \
             AFL_TESTCACHE_SIZE=200 \
@@ -201,7 +203,7 @@ jobs:
             > "logs/afl-fuzz-out_s2-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
 
-          timeout 300 env \
+          timeout "${total_time}" env \
             AFL_AUTORESUME=1 \
             AFL_IMPORT_FIRST=1 \
             AFL_TESTCACHE_SIZE=200 \
@@ -236,14 +238,14 @@ jobs:
 
           exit "$rc"
 
-      - name: Print final fuzzer_stats for all workers
+      - name: Print final fuzzer_stats for all workers and classify crashes
         if: always()
         shell: bash
         env:
           ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:halt_on_error=1:symbolize=1"
         run: |
           cd "${FUZZ_DIR}"
-          mkdir -p "${LOG_DIR}"
+          mkdir -p "${LOG_DIR}" "$(dirname "${KNOWN_SUMMARIES_FILE}")"
 
           echo "===== final fuzzer_stats for all workers ====="
           found=0
@@ -270,6 +272,7 @@ jobs:
             --output-json "${LOG_DIR}/asan_unique_report.json" \
             --output-text "${LOG_DIR}/asan_unique_summary.txt" \
             --details-dir "${LOG_DIR}/asan_details" \
+            --known-summaries-file "${KNOWN_SUMMARIES_FILE}" \
             --arg lo \
             "outputs/out_m0/crashes" \
             "outputs/out_s1/crashes" \
@@ -284,26 +287,59 @@ jobs:
           report_path = os.path.join(log_dir, "asan_unique_report.json")
           env_path = os.environ["GITHUB_ENV"]
 
+          defaults = {
+              "ASAN_TOTAL_CRASH_SEEDS": 0,
+              "ASAN_UNIQUE_BUG_COUNT": 0,
+              "ASAN_NEW_UNIQUE_BUG_COUNT": 0,
+              "ASAN_KNOWN_UNIQUE_BUG_COUNT": 0,
+              "ASAN_DUPLICATE_COUNT": 0,
+              "ASAN_NO_OUTPUT_COUNT": 0,
+              "ASAN_NO_SUMMARY_WITH_OUTPUT_COUNT": 0,
+              "ASAN_TIMEOUT_COUNT": 0,
+              "ASAN_ERROR_COUNT": 0,
+              "ASAN_SHOULD_CREATE_ISSUE": 0,
+          }
+
           if not os.path.exists(report_path):
               with open(env_path, "a", encoding="utf-8") as f:
-                  f.write("ASAN_TOTAL_CRASH_SEEDS=0\n")
-                  f.write("ASAN_UNIQUE_BUG_COUNT=0\n")
-                  f.write("ASAN_DUPLICATE_COUNT=0\n")
-                  f.write("ASAN_UNCLASSIFIED_COUNT=0\n")
-                  f.write("ASAN_TIMEOUT_COUNT=0\n")
-                  f.write("ASAN_ERROR_COUNT=0\n")
+                  for k, v in defaults.items():
+                      f.write(f"{k}={v}\n")
               raise SystemExit(0)
 
           with open(report_path, "r", encoding="utf-8") as f:
               data = json.load(f)
 
+          def read_detail_log_text(path: str) -> str:
+            if not path:
+                return ""
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as f:
+                    return f.read().rstrip()
+            except Exception as e:
+                return f"[failed to read ASAN detail log: {e}]"
+
+          new_unique_bug_count = int(data.get("new_unique_bug_count", 0))
+          timeout_count = int(data.get("timeout_count", 0))
+          no_output_count = int(data.get("no_output_count", 0))
+
+          should_create_issue = 1 if (new_unique_bug_count > 0 or timeout_count > 0 or no_output_count > 0) else 0
+
+          values = {
+              "ASAN_TOTAL_CRASH_SEEDS": int(data.get("total_seed_files", 0)),
+              "ASAN_UNIQUE_BUG_COUNT": int(data.get("unique_bug_count", 0)),
+              "ASAN_NEW_UNIQUE_BUG_COUNT": new_unique_bug_count,
+              "ASAN_KNOWN_UNIQUE_BUG_COUNT": int(data.get("known_unique_bug_count", 0)),
+              "ASAN_DUPLICATE_COUNT": int(data.get("duplicate_count", 0)),
+              "ASAN_NO_OUTPUT_COUNT": no_output_count,
+              "ASAN_NO_SUMMARY_WITH_OUTPUT_COUNT": int(data.get("no_summary_with_output_count", 0)),
+              "ASAN_TIMEOUT_COUNT": timeout_count,
+              "ASAN_ERROR_COUNT": int(data.get("error_count", 0)),
+              "ASAN_SHOULD_CREATE_ISSUE": should_create_issue,
+          }
+
           with open(env_path, "a", encoding="utf-8") as f:
-              f.write(f"ASAN_TOTAL_CRASH_SEEDS={data.get('total_seed_files', 0)}\n")
-              f.write(f"ASAN_UNIQUE_BUG_COUNT={data.get('unique_bug_count', 0)}\n")
-              f.write(f"ASAN_DUPLICATE_COUNT={data.get('duplicate_count', 0)}\n")
-              f.write(f"ASAN_UNCLASSIFIED_COUNT={data.get('unclassified_count', 0)}\n")
-              f.write(f"ASAN_TIMEOUT_COUNT={data.get('timeout_count', 0)}\n")
-              f.write(f"ASAN_ERROR_COUNT={data.get('error_count', 0)}\n")
+              for k, v in values.items():
+                  f.write(f"{k}={v}\n")
           PY
 
       - name: Create GitHub issue with ASAN deduplicated summary
@@ -321,28 +357,22 @@ jobs:
         run: |
           cd "${FUZZ_DIR}"
 
+          if [ "${ASAN_SHOULD_CREATE_ISSUE:-0}" != "1" ]; then
+            echo "No new unique bugs, no timeouts, and no no-output seeds. Skip issue creation."
+            exit 0
+          fi
+
           report_json="${LOG_DIR}/asan_unique_report.json"
-          summary_txt="${LOG_DIR}/asan_unique_summary.txt"
 
           if [ ! -f "${report_json}" ]; then
             echo "ASAN report not found. Skip GitHub issue."
             exit 0
           fi
 
-          total_crash_seeds="${ASAN_TOTAL_CRASH_SEEDS:-0}"
-          unique_bug_count="${ASAN_UNIQUE_BUG_COUNT:-0}"
-
-          echo "Total crash seeds: ${total_crash_seeds}"
-          echo "Unique ASAN bug types: ${unique_bug_count}"
-
-          if [ "${total_crash_seeds}" -le 0 ]; then
-            echo "No crash seeds found in this segment. Skip GitHub issue."
-            exit 0
-          fi
-
-          issue_title="${MAIL_SUBJECT_PREFIX} ${WORKFLOW_LABEL} segment ${{ inputs.run_segment }}: ${unique_bug_count} unique bug types (${total_crash_seeds} crash seeds)"
+          issue_title="${MAIL_SUBJECT_PREFIX} ${WORKFLOW_LABEL} seg ${{ inputs.run_segment }}: ${ASAN_NEW_UNIQUE_BUG_COUNT:-0} new bug types, ${ASAN_TIMEOUT_COUNT:-0} timeouts, ${ASAN_NO_OUTPUT_COUNT:-0} no-output seeds"
           issue_body_file="$(mktemp)"
 
+          export ISSUE_TITLE="${issue_title}"
           export ISSUE_BODY_FILE="${issue_body_file}"
           export REPORT_JSON="${report_json}"
 
@@ -361,17 +391,21 @@ jobs:
           alert_user = os.environ.get("ALERT_GH_USER", "").strip()
           run_segment = os.environ["INPUT_RUN_SEGMENT"]
           max_segments = os.environ["INPUT_MAX_SEGMENTS"]
+          known_summaries_file = os.environ["KNOWN_SUMMARIES_FILE"]
 
           with open(report_path, "r", encoding="utf-8") as f:
               data = json.load(f)
 
-          unique_bugs = data.get("unique_bugs", [])
-          unclassified = data.get("unclassified", [])
+          new_unique_bugs = data.get("new_unique_bugs", [])
+          known_unique_bug_count = data.get("known_unique_bug_count", 0)
+          no_output = data.get("no_output", [])
+          no_summary_with_output = data.get("no_summary_with_output", [])
           timeouts = data.get("timeouts", [])
           errors = data.get("errors", [])
 
           timeout_seed_paths = [item["seed"] for item in timeouts]
           timeout_seed_dirs = sorted(set(os.path.dirname(p) for p in timeout_seed_paths if p))
+          no_output_seed_paths = [item["seed"] for item in no_output]
 
           lines = []
           lines.append("🚨 **AFL++ Segment Finished — ASAN Deduplicated Crash Summary**")
@@ -384,45 +418,58 @@ jobs:
           lines.append(f"- **Segment Progress:** {run_segment} / {max_segments}")
           lines.append(f"- **Target:** {target_label}")
           lines.append(f"- **Total Crash Seeds in This Segment:** **{data.get('total_seed_files', 0)}**")
-          lines.append(f"- **Unique Bug Types (deduplicated by ASAN SUMMARY):** **{data.get('unique_bug_count', 0)}**")
-          lines.append(f"- **Duplicate Crash Seeds:** {data.get('duplicate_count', 0)}")
-          lines.append(f"- **Unclassified Crash Seeds (no SUMMARY):** {data.get('unclassified_count', 0)}")
+          lines.append(f"- **Unique Bug Types In This Segment:** **{data.get('unique_bug_count', 0)}**")
+          lines.append(f"- **NEW Unique Bug Types In This Segment:** **{data.get('new_unique_bug_count', 0)}**")
+          lines.append(f"- **Already-Known Bug Types Seen Again:** {known_unique_bug_count}")
+          lines.append(f"- **Duplicate Crash Seeds Inside This Segment:** {data.get('duplicate_count', 0)}")
+          lines.append(f"- **No-output Seed Count:** **{data.get('no_output_count', 0)}**")
           lines.append(f"- **Timeout Seed Count:** **{data.get('timeout_count', 0)}**")
-          lines.append(f"- **Execution Errors During Classification:** {data.get('error_count', 0)}")
+          lines.append(f"- **No-SUMMARY But Non-empty Output Count:** {data.get('no_summary_with_output_count', 0)}")
+          lines.append(f"- **Classification Execution Error Count:** {data.get('error_count', 0)}")
+          lines.append(f"- **Known Summary Store:** `{known_summaries_file}`")
           lines.append(f"- [**View GitHub Action Run Here**]({run_url})")
           lines.append("")
 
-          lines.append("### Deduplicated ASAN Bug Types")
-          if unique_bugs:
-              for idx, bug in enumerate(unique_bugs, 1):
-                  lines.append(f"#### Bug #{idx}")
-                  lines.append(f"- **SUMMARY:** `{bug['summary']}`")
-                  lines.append(f"- **First Reproducer:** `{bug['first_seed']}`")
-                  lines.append(f"- **Matching Crash Seed Count:** {bug['seed_count']}")
-                  if bug.get("detail_log"):
-                      lines.append(f"- **Saved Full ASAN Log:** `{bug['detail_log']}`")
-                  lines.append("")
-                  lines.append("**Matching Seed Files:**")
-                  lines.append("```text")
-                  for seed_path in bug.get("seed_paths", []):
-                      lines.append(seed_path)
-                  lines.append("```")
-                  lines.append("")
+          lines.append("### NEW Deduplicated ASAN Bug Types")
+          if new_unique_bugs:
+            for idx, bug in enumerate(new_unique_bugs, 1):
+                lines.append(f"#### Bug #{idx}")
+                lines.append(f"- **SUMMARY:** `{bug['summary']}`")
+                lines.append(f"- **First Reproducer:** `{bug['first_seed']}`")
+                lines.append(f"- **Matching Crash Seed Count In This Segment:** {bug['seed_count']}")
+                if bug.get("detail_log"):
+                    lines.append(f"- **Saved Full ASAN Log:** `{bug['detail_log']}`")
+                lines.append("")
+                lines.append("**Matching Seed Files:**")
+                lines.append("```text")
+                lines.append(bug["first_seed"])
+                lines.append("```")
+                lines.append("")
+
+                asan_full_output = read_detail_log_text(bug.get("detail_log", ""))
+                lines.append("**Full ASAN Output:**")
+                lines.append("```text")
+                lines.append(asan_full_output if asan_full_output else "[empty ASAN output log]")
+                lines.append("```")
+                lines.append("")
           else:
-              lines.append("No ASAN `SUMMARY` line was extracted from the crash seeds in this segment.")
+              lines.append("No new unique ASAN bug types were found in this segment.")
               lines.append("")
 
-          if unclassified:
-              lines.append("### Unclassified Crash Seeds")
-              lines.append(f"- **Unclassified Seed Count:** {len(unclassified)}")
+          lines.append("### No-output Seeds")
+          if no_output_seed_paths:
+              lines.append(f"- **No-output Seed Count:** {len(no_output_seed_paths)}")
               lines.append("```text")
-              for item in unclassified:
-                  lines.append(item["seed"])
+              for seed in no_output_seed_paths:
+                  lines.append(seed)
               lines.append("```")
               lines.append("")
+          else:
+              lines.append("- **No-output Seed Count:** 0")
+              lines.append("")
 
-          if timeouts:
-              lines.append("### Classification Timeouts")
+          lines.append("### Classification Timeouts")
+          if timeout_seed_paths:
               lines.append(f"- **Timeout Seed Count:** {len(timeout_seed_paths)}")
               lines.append("")
               lines.append("**Timeout Seed Directories:**")
@@ -438,8 +485,16 @@ jobs:
               lines.append("```")
               lines.append("")
           else:
-              lines.append("### Classification Timeouts")
               lines.append("- **Timeout Seed Count:** 0")
+              lines.append("")
+
+          if no_summary_with_output:
+              lines.append("### No-SUMMARY But Non-empty Output Seeds")
+              lines.append(f"- **Seed Count:** {len(no_summary_with_output)}")
+              lines.append("```text")
+              for item in no_summary_with_output:
+                  lines.append(item["seed"])
+              lines.append("```")
               lines.append("")
 
           if errors:
@@ -457,9 +512,6 @@ jobs:
           with open(out_path, "w", encoding="utf-8") as f:
               f.write("\n".join(lines))
           PY
-
-          export ISSUE_TITLE="${issue_title}"
-          export ISSUE_BODY_FILE="${issue_body_file}"
 
           python3 - <<'PY'
           import json
@@ -510,6 +562,44 @@ jobs:
               else:
                   raise
           PY
+
+          if [ "${ASAN_NEW_UNIQUE_BUG_COUNT:-0}" -gt 0 ]; then
+            python3 - <<'PY'
+            import json
+            import os
+
+            report_json = os.path.join(os.environ["LOG_DIR"], "asan_unique_report.json")
+            known_file = os.environ["KNOWN_SUMMARIES_FILE"]
+
+            existing = []
+            existing_set = set()
+
+            if os.path.exists(known_file):
+                with open(known_file, "r", encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        s = line.strip()
+                        if s and s not in existing_set:
+                            existing.append(s)
+                            existing_set.add(s)
+
+            with open(report_json, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            for bug in data.get("new_unique_bugs", []):
+                s = bug["summary"].strip()
+                if s and s not in existing_set:
+                    existing.append(s)
+                    existing_set.add(s)
+
+            os.makedirs(os.path.dirname(known_file), exist_ok=True)
+            with open(known_file, "w", encoding="utf-8") as f:
+                for s in existing:
+                    f.write(s + "\n")
+
+            print(f"Updated known summary store: {known_file}")
+            print(f"Total known summaries now: {len(existing)}")
+            PY
+          fi
 
       - name: Pack fuzzing results
         if: always()

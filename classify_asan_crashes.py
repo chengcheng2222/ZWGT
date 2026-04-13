@@ -6,7 +6,7 @@ import os
 import re
 import subprocess
 import sys
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 SUMMARY_RE = re.compile(r"^SUMMARY:\s+AddressSanitizer:\s+(.+)$", re.MULTILINE)
 
@@ -52,6 +52,24 @@ def write_text(path: str, content: str) -> None:
         f.write(content)
 
 
+def read_known_summaries(path: str) -> Set[str]:
+    if not path or not os.path.exists(path):
+        return set()
+
+    summaries: Set[str] = set()
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            s = line.strip()
+            if s:
+                summaries.add(s)
+    return summaries
+
+
+def make_detail_log_path(details_dir: str, idx: int, summary: str) -> str:
+    digest = hashlib.sha256(summary.encode("utf-8")).hexdigest()[:16]
+    return os.path.join(details_dir, f"bug_{idx:03d}_{digest}.log")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Classify crash seeds with an ASAN-built binary and deduplicate by ASAN SUMMARY."
@@ -62,6 +80,11 @@ def main() -> int:
     parser.add_argument("--output-json", required=True, help="Path to JSON report")
     parser.add_argument("--output-text", required=True, help="Path to human-readable summary")
     parser.add_argument("--details-dir", default="", help="Directory to store first full ASAN log for each unique bug type")
+    parser.add_argument(
+        "--known-summaries-file",
+        default="",
+        help="Plain text file containing already-reported ASAN SUMMARY lines, one per line",
+    )
     parser.add_argument("crash_dirs", nargs="+", help="One or more crash directories")
 
     args = parser.parse_args()
@@ -79,15 +102,18 @@ def main() -> int:
         return 2
 
     seed_files = list_seed_files(args.crash_dirs)
+    known_summaries_before = read_known_summaries(args.known_summaries_file)
 
     unique: Dict[str, Dict] = {}
-    unclassified: List[Dict] = []
+    no_output: List[Dict] = []
+    no_summary_with_output: List[Dict] = []
     timeouts: List[Dict] = []
     errors: List[Dict] = []
 
     total = 0
     duplicate_count = 0
-    unclassified_count = 0
+    no_output_count = 0
+    no_summary_with_output_count = 0
     timeout_count = 0
     error_count = 0
 
@@ -111,38 +137,44 @@ def main() -> int:
             output = result.stdout.decode("utf-8", errors="replace")
             summary = extract_summary(output)
 
-            if summary is None:
-                unclassified_count += 1
-                unclassified.append(
+            if summary is not None:
+                if summary not in unique:
+                    bug = {
+                        "summary": summary,
+                        "first_seed": seed,
+                        "seed_count": 1,
+                        "returncode": result.returncode,
+                        "detail_log": "",
+                    }
+
+                    if args.details_dir:
+                        detail_path = make_detail_log_path(args.details_dir, len(unique) + 1, summary)
+                        write_text(detail_path, output)
+                        bug["detail_log"] = detail_path
+
+                    unique[summary] = bug
+                else:
+                    unique[summary]["seed_count"] += 1
+                    duplicate_count += 1
+
+                continue
+
+            if output.strip() == "":
+                no_output_count += 1
+                no_output.append(
                     {
                         "seed": seed,
                         "returncode": result.returncode,
                     }
                 )
-                continue
-
-            if summary not in unique:
-                bug = {
-                    "summary": summary,
-                    "first_seed": seed,
-                    "seed_paths": [seed],
-                    "seed_count": 1,
-                    "returncode": result.returncode,
-                    "detail_log": "",
-                }
-
-                if args.details_dir:
-                    digest = hashlib.sha256(summary.encode("utf-8")).hexdigest()[:16]
-                    detail_name = f"bug_{len(unique) + 1:03d}_{digest}.log"
-                    detail_path = os.path.join(args.details_dir, detail_name)
-                    write_text(detail_path, output)
-                    bug["detail_log"] = detail_path
-
-                unique[summary] = bug
             else:
-                unique[summary]["seed_paths"].append(seed)
-                unique[summary]["seed_count"] += 1
-                duplicate_count += 1
+                no_summary_with_output_count += 1
+                no_summary_with_output.append(
+                    {
+                        "seed": seed,
+                        "returncode": result.returncode,
+                    }
+                )
 
         except subprocess.TimeoutExpired as e:
             timeout_count += 1
@@ -167,17 +199,34 @@ def main() -> int:
 
     unique_bugs = sorted(unique.values(), key=lambda x: (x["summary"], x["first_seed"]))
 
+    new_unique_bugs: List[Dict] = []
+    known_unique_bugs: List[Dict] = []
+
+    for bug in unique_bugs:
+        if bug["summary"] in known_summaries_before:
+            known_unique_bugs.append(bug)
+        else:
+            new_unique_bugs.append(bug)
+
     report = {
         "command": target_cmd,
         "crash_dirs": args.crash_dirs,
+        "known_summaries_file": args.known_summaries_file,
+        "known_summaries_before_count": len(known_summaries_before),
         "total_seed_files": total,
         "unique_bug_count": len(unique_bugs),
+        "new_unique_bug_count": len(new_unique_bugs),
+        "known_unique_bug_count": len(known_unique_bugs),
         "duplicate_count": duplicate_count,
-        "unclassified_count": unclassified_count,
+        "no_output_count": no_output_count,
+        "no_summary_with_output_count": no_summary_with_output_count,
         "timeout_count": timeout_count,
         "error_count": error_count,
         "unique_bugs": unique_bugs,
-        "unclassified": unclassified,
+        "new_unique_bugs": new_unique_bugs,
+        "known_unique_bugs": known_unique_bugs,
+        "no_output": no_output,
+        "no_summary_with_output": no_summary_with_output,
         "timeouts": timeouts,
         "errors": errors,
     }
@@ -191,48 +240,69 @@ def main() -> int:
     lines.append("[ASAN DEDUPLICATED CRASH SUMMARY]")
     lines.append(f"Target command: {' '.join(target_cmd)}")
     lines.append(f"Crash directories: {', '.join(args.crash_dirs)}")
+    lines.append(f"Known summary store: {args.known_summaries_file or '(not set)'}")
+    lines.append(f"Known summaries before this run: {len(known_summaries_before)}")
     lines.append(f"Total crash seeds: {total}")
-    lines.append(f"Unique bug types: {len(unique_bugs)}")
-    lines.append(f"Duplicate crash seeds: {duplicate_count}")
-    lines.append(f"Unclassified seeds (no SUMMARY): {unclassified_count}")
+    lines.append(f"Unique bug types in this run: {len(unique_bugs)}")
+    lines.append(f"NEW unique bug types in this run: {len(new_unique_bugs)}")
+    lines.append(f"Already-known bug types seen again: {len(known_unique_bugs)}")
+    lines.append(f"Duplicate crash seeds inside this run: {duplicate_count}")
+    lines.append(f"No-output seeds: {no_output_count}")
+    lines.append(f"No-SUMMARY but non-empty output seeds: {no_summary_with_output_count}")
     lines.append(f"Timeouts: {timeout_count}")
     lines.append(f"Execution errors: {error_count}")
     lines.append("=" * 120)
     lines.append("")
 
-    if unique_bugs:
-        for idx, bug in enumerate(unique_bugs, 1):
+    if new_unique_bugs:
+        lines.append("[NEW unique bug types]")
+        for idx, bug in enumerate(new_unique_bugs, 1):
             lines.append("-" * 120)
-            lines.append(f"[Unique Bug #{idx}]")
+            lines.append(f"[New Bug #{idx}]")
             lines.append(f"SUMMARY: AddressSanitizer: {bug['summary']}")
             lines.append(f"First seed: {bug['first_seed']}")
-            lines.append(f"Matching seed count: {bug['seed_count']}")
+            lines.append(f"Matching seed count in this run: {bug['seed_count']}")
             if bug.get("detail_log"):
                 lines.append(f"Saved full ASAN log: {bug['detail_log']}")
-            lines.append("Matching seed files:")
-            for seed_path in bug["seed_paths"]:
-                lines.append(f"  - {seed_path}")
             lines.append("")
     else:
-        lines.append("[INFO] No ASAN SUMMARY extracted from crash seeds.")
+        lines.append("[INFO] No NEW unique bug types in this run.")
         lines.append("")
 
-    if unclassified:
-        lines.append("-" * 120)
-        lines.append("[Unclassified seeds]")
-        for item in unclassified:
+    if known_unique_bugs:
+        lines.append("[Already-known bug types seen again]")
+        for idx, bug in enumerate(known_unique_bugs, 1):
+            lines.append("-" * 120)
+            lines.append(f"[Known Bug #{idx}]")
+            lines.append(f"SUMMARY: AddressSanitizer: {bug['summary']}")
+            lines.append(f"First seed in this run: {bug['first_seed']}")
+            lines.append(f"Matching seed count in this run: {bug['seed_count']}")
+            if bug.get("detail_log"):
+                lines.append(f"Saved full ASAN log: {bug['detail_log']}")
+            lines.append("")
+    else:
+        lines.append("[INFO] No already-known bug types were re-seen in this run.")
+        lines.append("")
+
+    if no_output:
+        lines.append("[No-output seeds]")
+        for item in no_output:
+            lines.append(f"  - {item['seed']} (returncode={item['returncode']})")
+        lines.append("")
+
+    if no_summary_with_output:
+        lines.append("[No-SUMMARY but non-empty output seeds]")
+        for item in no_summary_with_output:
             lines.append(f"  - {item['seed']} (returncode={item['returncode']})")
         lines.append("")
 
     if timeouts:
-        lines.append("-" * 120)
         lines.append("[Timeout seeds]")
         for item in timeouts:
             lines.append(f"  - {item['seed']}")
         lines.append("")
 
     if errors:
-        lines.append("-" * 120)
         lines.append("[Execution errors]")
         for item in errors:
             lines.append(f"  - {item['seed']} :: {item['error']}")

@@ -609,7 +609,7 @@ jobs:
             print(f"Updated known summary store: {known_file}")
             print(f"Total known summaries now: {len(existing)}")
             PY
-          fi
+            fi
 
       - name: Pack fuzzing results
         if: always()

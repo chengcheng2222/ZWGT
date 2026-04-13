@@ -574,41 +574,41 @@ jobs:
           PY
 
           if [ "${ASAN_NEW_UNIQUE_BUG_COUNT:-0}" -gt 0 ]; then
-            python3 - <<'PY'
-            import json
-            import os
+          python3 - <<'PY'
+          import json
+          import os
 
-            report_json = os.path.join(os.environ["LOG_DIR"], "asan_unique_report.json")
-            known_file = os.environ["KNOWN_SUMMARIES_FILE"]
+          report_json = os.path.join(os.environ["LOG_DIR"], "asan_unique_report.json")
+          known_file = os.environ["KNOWN_SUMMARIES_FILE"]
 
-            existing = []
-            existing_set = set()
+          existing = []
+          existing_set = set()
 
-            if os.path.exists(known_file):
-                with open(known_file, "r", encoding="utf-8", errors="replace") as f:
-                    for line in f:
-                        s = line.strip()
-                        if s and s not in existing_set:
-                            existing.append(s)
-                            existing_set.add(s)
+          if os.path.exists(known_file):
+              with open(known_file, "r", encoding="utf-8", errors="replace") as f:
+                  for line in f:
+                      s = line.strip()
+                      if s and s not in existing_set:
+                          existing.append(s)
+                          existing_set.add(s)
 
-            with open(report_json, "r", encoding="utf-8") as f:
-                data = json.load(f)
+          with open(report_json, "r", encoding="utf-8") as f:
+              data = json.load(f)
 
-            for bug in data.get("new_unique_bugs", []):
-                s = bug["summary"].strip()
-                if s and s not in existing_set:
-                    existing.append(s)
-                    existing_set.add(s)
+          for bug in data.get("new_unique_bugs", []):
+              s = bug["summary"].strip()
+              if s and s not in existing_set:
+                  existing.append(s)
+                  existing_set.add(s)
 
-            os.makedirs(os.path.dirname(known_file), exist_ok=True)
-            with open(known_file, "w", encoding="utf-8") as f:
-                for s in existing:
-                    f.write(s + "\n")
+          os.makedirs(os.path.dirname(known_file), exist_ok=True)
+          with open(known_file, "w", encoding="utf-8") as f:
+              for s in existing:
+                  f.write(s + "\n")
 
-            print(f"Updated known summary store: {known_file}")
-            print(f"Total known summaries now: {len(existing)}")
-            PY
+          print(f"Updated known summary store: {known_file}")
+          print(f"Total known summaries now: {len(existing)}")
+          PY
                 fi
 
       - name: Pack fuzzing results

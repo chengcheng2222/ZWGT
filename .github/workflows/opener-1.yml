@@ -58,7 +58,7 @@ env:
   RESULT_ARCHIVE_PREFIX: opener-1-findings
   LOG_ARTIFACT_PREFIX: opener-1-log
 
-  TOTAL_TIME:300
+  TOTAL_TIME: 300
 
   WORKFLOW_DISPATCH_FILE: opener-1.yml
   DISPATCH_REF: main

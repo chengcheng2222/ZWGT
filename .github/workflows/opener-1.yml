@@ -306,7 +306,7 @@ jobs:
               f.write(f"ASAN_ERROR_COUNT={data.get('error_count', 0)}\n")
           PY
 
-            - name: Create GitHub issue with ASAN deduplicated summary
+      - name: Create GitHub issue with ASAN deduplicated summary
         continue-on-error: true
         if: always()
         shell: bash

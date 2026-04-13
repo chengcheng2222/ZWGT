@@ -316,6 +316,8 @@ jobs:
           RUN_NO: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           ALERT_GH_USER: ${{ env.ALERT_GH_USER }}
+          INPUT_RUN_SEGMENT: ${{ inputs.run_segment }}
+          INPUT_MAX_SEGMENTS: ${{ inputs.max_segments }}
         run: |
           cd "${FUZZ_DIR}"
 

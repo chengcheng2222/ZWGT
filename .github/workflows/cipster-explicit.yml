@@ -1,6 +1,6 @@
-name: cipster-1
+name: cipster-explicit
 
-run-name: cipster-1 fuzzing [${{ inputs.run_segment }}/${{ inputs.max_segments }}] on ${{ inputs.target_branch }}
+run-name: cipster-explicit fuzzing [${{ inputs.run_segment }}/${{ inputs.max_segments }}] on ${{ inputs.target_branch }}
 
 on:
   workflow_dispatch:
@@ -41,8 +41,8 @@ permissions:
   issues: write
 
 env:
-  WORKFLOW_LABEL: cipster-1
-  TARGET_LABEL: cipster-1
+  WORKFLOW_LABEL: cipster-explicit
+  TARGET_LABEL: cipster-explicit
   MAIL_SUBJECT_PREFIX: "[AFL Alert]"
 
   FUZZ_DIR: cipster
@@ -55,8 +55,8 @@ env:
   LOG_DIR: logs
   KNOWN_SUMMARIES_FILE: outputs/asan_known_summaries.txt
 
-  RESULT_ARCHIVE_PREFIX: cipster-1-findings
-  LOG_ARTIFACT_PREFIX: cipster-1-log
+  RESULT_ARCHIVE_PREFIX: cipster-explicit-findings
+  LOG_ARTIFACT_PREFIX: cipster-explicit-log
 
   WORKFLOW_DISPATCH_FILE: cipster-explicit.yml
   DISPATCH_REF: main

@@ -155,6 +155,7 @@ jobs:
             AFL_AUTORESUME=1 \
             AFL_IMPORT_FIRST=1 \
             AFL_FINAL_SYNC=1 \
+            AFL_SKIP_CPUFREQ=1 \
             AFL_TESTCACHE_SIZE=200 \
             "${AFL_FUZZ_PATH}" \
               -i inputs \
@@ -172,6 +173,7 @@ jobs:
             AFL_AUTORESUME=1 \
             AFL_CMPLOG_ONLY_NEW=1 \
             AFL_IMPORT_FIRST=1 \
+             AFL_SKIP_CPUFREQ=1 \
             AFL_TESTCACHE_SIZE=200 \
             "${AFL_FUZZ_PATH}" \
               -i inputs \
@@ -187,6 +189,7 @@ jobs:
           pids+=($!)
 
           timeout 21300 env \
+            AFL_SKIP_CPUFREQ=1 \
             AFL_AUTORESUME=1 \
             AFL_IMPORT_FIRST=1 \
             AFL_TESTCACHE_SIZE=200 \
@@ -205,6 +208,7 @@ jobs:
           pids+=($!)
 
           timeout 21300 env \
+            AFL_SKIP_CPUFREQ=1 \
             AFL_AUTORESUME=1 \
             AFL_IMPORT_FIRST=1 \
             AFL_TESTCACHE_SIZE=200 \

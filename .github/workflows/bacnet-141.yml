@@ -51,10 +51,10 @@ env:
   TARGET_LABEL: ${{ inputs.target_id }}
   MAIL_SUBJECT_PREFIX: "[AFL Alert]"
 
-  FUZZ_DIR: opener
-  TARGET_BIN: ./opener
-  CMPLOG_BIN: ./opener.cmplog
-  ASAN_BIN: ./opener_asan
+  FUZZ_DIR: ${{ inputs.target_id }}
+  TARGET_BIN: ./bacnet
+  CMPLOG_BIN: ./bacnet.cmplog
+  ASAN_BIN: ./server_asan
   DICT_NAME: lib.dict
   AFL_FUZZ_PATH: ../afl-fuzz
   OUTPUT_DIR: outputs

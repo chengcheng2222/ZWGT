@@ -172,6 +172,7 @@ jobs:
               -p explore \
               -x "${DICT_NAME}" \
               -m none \
+              -t 3000+ \
               -- "${TARGET_BIN}" 1000 \
             > "logs/afl-fuzz-out_m0-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
@@ -191,6 +192,7 @@ jobs:
               -x "${DICT_NAME}" \
               -c "${CMPLOG_BIN}" \
               -m none \
+              -t 3000+ \
               -- "${TARGET_BIN}" 1001 \
             > "logs/afl-fuzz-out_s1-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
@@ -210,6 +212,7 @@ jobs:
               -x "${DICT_NAME}" \
               -m none \
               -L 0 \
+              -t 3000+ \
               -- "${TARGET_BIN}" 1002 \
             > "logs/afl-fuzz-out_s2-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
@@ -228,6 +231,7 @@ jobs:
               -p coe \
               -x "${DICT_NAME}" \
               -m none \
+              -t 3000+ \
               -- "${TARGET_BIN}" 1003 \
             > "logs/afl-fuzz-out_s3-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)

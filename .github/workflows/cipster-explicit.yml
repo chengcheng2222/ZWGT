@@ -1,4 +1,4 @@
-name: opener-1
+name: cipster-explicit
 
 run-name: ${{ inputs.target_id }} fuzzing [${{ inputs.run_segment }}/${{ inputs.max_segments }}] on ${{ inputs.target_branch }}
 

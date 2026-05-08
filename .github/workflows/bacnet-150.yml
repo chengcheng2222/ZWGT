@@ -145,6 +145,9 @@ jobs:
           mkdir -p "${LOG_DIR}"
           chmod +x "${TARGET_BIN}" "${AFL_FUZZ_PATH}"
 
+          MUTATOR_PATH="$(pwd)/mutator.so"
+          chmod +x "$MUTATOR_PATH"
+
           export AFL_NO_UI=1
 
           workers="$(nproc)"
@@ -163,6 +166,7 @@ jobs:
             AFL_IMPORT_FIRST=1 \
             AFL_FINAL_SYNC=1 \
             AFL_TESTCACHE_SIZE=200 \
+            AFL_CUSTOM_MUTATOR_LIBRARY="$MUTATOR_PATH" \
             BACNET_IFACE=lo \
             BACNET_IP_PORT=47808 \
             "${AFL_FUZZ_PATH}" \
@@ -172,7 +176,8 @@ jobs:
               -p explore \
               -x "${DICT_NAME}" \
               -m none \
-              -- "${TARGET_BIN}" 1000 \
+              -t 3000+ \
+              -- "${TARGET_BIN}" 1200 \
             > "logs/afl-fuzz-out_m0-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
 
@@ -181,6 +186,7 @@ jobs:
             AFL_CMPLOG_ONLY_NEW=1 \
             AFL_IMPORT_FIRST=1 \
             AFL_TESTCACHE_SIZE=200 \
+            AFL_CUSTOM_MUTATOR_LIBRARY="$MUTATOR_PATH" \
             BACNET_IFACE=lo \
             BACNET_IP_PORT=47818 \
             "${AFL_FUZZ_PATH}" \
@@ -191,7 +197,8 @@ jobs:
               -x "${DICT_NAME}" \
               -c "${CMPLOG_BIN}" \
               -m none \
-              -- "${TARGET_BIN}" 1001 \
+              -t 3000+ \
+              -- "${TARGET_BIN}" 1201 \
             > "logs/afl-fuzz-out_s1-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
 
@@ -200,6 +207,7 @@ jobs:
             AFL_IMPORT_FIRST=1 \
             AFL_TESTCACHE_SIZE=200 \
             AFL_DISABLE_TRIM=1 \
+            AFL_CMPLOG_ONLY_NEW=1 \
             BACNET_IFACE=lo \
             BACNET_IP_PORT=47828 \
             "${AFL_FUZZ_PATH}" \
@@ -208,9 +216,12 @@ jobs:
               -S out_s2 \
               -p exploit \
               -x "${DICT_NAME}" \
+              -c "${CMPLOG_BIN}" \
+              -l 2AT \
               -m none \
               -L 0 \
-              -- "${TARGET_BIN}" 1002 \
+              -t 3000+ \
+              -- "${TARGET_BIN}" 1202 \
             > "logs/afl-fuzz-out_s2-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
 
@@ -219,6 +230,7 @@ jobs:
             AFL_IMPORT_FIRST=1 \
             AFL_TESTCACHE_SIZE=200 \
             AFL_DISABLE_TRIM=1 \
+            AFL_CUSTOM_MUTATOR_LIBRARY="$MUTATOR_PATH" \
             BACNET_IFACE=lo \
             BACNET_IP_PORT=47838 \
             "${AFL_FUZZ_PATH}" \
@@ -228,7 +240,8 @@ jobs:
               -p coe \
               -x "${DICT_NAME}" \
               -m none \
-              -- "${TARGET_BIN}" 1003 \
+              -t 3000+ \
+              -- "${TARGET_BIN}" 1203 \
             > "logs/afl-fuzz-out_s3-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
 
@@ -279,6 +292,8 @@ jobs:
           fi
 
           echo "===== ASAN deduplicated crash summary ====="
+          ulimit -c unlimited
+          ASAN_OPTIONS=abort_on_error=1:symbolize=1:detect_leaks=0:allocator_may_return_null=1 \
           BACNET_IFACE=lo \
           BACNET_IP_PORT=47808 \
           python3 ../classify_asan_crashes.py \
@@ -289,7 +304,7 @@ jobs:
             --details-dir "${LOG_DIR}/asan_details" \
             --known-summaries-file "${KNOWN_SUMMARIES_FILE}" \
             --known-outputs-dir "${KNOWN_NONSUMMARY_OUTPUTS_DIR}" \
-            --arg lo \
+            --arg 1200 \
             "outputs/out_m0/crashes" \
             "outputs/out_s1/crashes" \
             "outputs/out_s2/crashes" \
